@@ -2,6 +2,7 @@
 #define FILTERPROXYMODEL_H
 
 #include <QSortFilterProxyModel>
+#include <QRegularExpression>
 
 class FilterProxyModel : public QSortFilterProxyModel
 {
@@ -10,10 +11,11 @@ public:
     explicit FilterProxyModel(QObject *parent = nullptr) : QSortFilterProxyModel(parent) {}
 
 protected:
-    // 重写以便在所有列中进行过滤
+    // 重写以便在所有列中进行过滤（使用 QRegularExpression，兼容 Qt5.15+ 与 Qt6）
     bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override
     {
-        if (filterRegExp().isEmpty())
+        QRegularExpression re = filterRegularExpression();
+        if (re.pattern().isEmpty())
             return true;
 
         QAbstractItemModel *m = sourceModel();
@@ -21,7 +23,7 @@ protected:
         for (int c = 0; c < cols; ++c) {
             QModelIndex idx = m->index(source_row, c, source_parent);
             QVariant data = m->data(idx);
-            if (data.toString().contains(filterRegExp()))
+            if (data.toString().contains(re))
                 return true;
         }
         return false;

@@ -8,15 +8,25 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QDebug>
+#include <QFile>
+#include <QTextStream>
+#include <QRegularExpression>
+#include <algorithm>
 
-#include <QAxObject>
+// Detect QXlsx availability
+#if defined(__has_include)
+  #if __has_include(<QXlsx/Document>)
+    #include <QXlsx/Document>
+    #define HAS_QTXLSX 1
+  #endif
+#endif
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       tableView(new QTableView(this)),
       model(new QStandardItemModel(this)),
       proxy(new FilterProxyModel(this)),
-      importBtn(new QPushButton(tr("导入 Excel"), this)),
+      importBtn(new QPushButton(tr("导入 Excel/CSV"), this)),
       addBtn(new QPushButton(tr("新增行"), this)),
       deleteBtn(new QPushButton(tr("删除选中"), this)),
       searchEdit(new QLineEdit(this))
@@ -59,78 +69,125 @@ void MainWindow::setupUi()
     central->setLayout(vl);
 }
 
+static QString trimQuotes(const QString &s)
+{
+    QString t = s;
+    if (t.startsWith('"') && t.endsWith('"') && t.length() >= 2)
+        t = t.mid(1, t.length()-2);
+    return t;
+}
+
+// Simple CSV parser for fallback (comma-separated, supports quoted fields)
+static QStringList parseCsvLine(const QString &line)
+{
+    QStringList fields;
+    QString cur;
+    bool inQuotes = false;
+    for (int i = 0; i < line.length(); ++i) {
+        QChar ch = line[i];
+        if (ch == '"') {
+            if (inQuotes && i+1 < line.length() && line[i+1] == '"') {
+                // escaped quote
+                cur.append('"');
+                ++i; // skip next quote
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (ch == ',' && !inQuotes) {
+            fields.append(trimQuotes(cur));
+            cur.clear();
+        } else {
+            cur.append(ch);
+        }
+    }
+    fields.append(trimQuotes(cur));
+    return fields;
+}
+
 void MainWindow::importExcel()
 {
-    QString file = QFileDialog::getOpenFileName(this, tr("选择 Excel 文件"), QString(), tr("Excel Files (*.xlsx *.xls)"));
+    QString file = QFileDialog::getOpenFileName(this, tr("选择文件"), QString(), tr("Excel/CSV Files (*.xlsx *.xls *.csv)"));
     if (file.isEmpty())
         return;
 
-    QAxObject *excel = nullptr;
-    QAxObject *workbooks = nullptr;
-    QAxObject *workbook = nullptr;
-    QAxObject *sheet = nullptr;
-    try {
-        excel = new QAxObject("Excel.Application", this);
-        excel->setProperty("Visible", false);
-        workbooks = excel->querySubObject("Workbooks");
-        workbook = workbooks->querySubObject("Open(const QString&)", file);
-        sheet = workbook->querySubObject("Worksheets(int)", 1); // 读取第一个工作表
-
-        QAxObject *usedRange = sheet->querySubObject("UsedRange");
-        QAxObject *rows = usedRange->querySubObject("Rows");
-        QAxObject *cols = usedRange->querySubObject("Columns");
-        int rowCount = rows->property("Count").toInt();
-        int colCount = cols->property("Count").toInt();
-
-        if (rowCount <= 0 || colCount <= 0) {
-            QMessageBox::warning(this, tr("读取失败"), tr("未检测到数据。"));
-            workbook->dynamicCall("Close()");
-            excel->dynamicCall("Quit()");
-            delete excel;
+    // Prefer .xlsx via QXlsx if available
+    if (file.endsWith(".csv", Qt::CaseInsensitive)) {
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::warning(this, tr("读取失败"), tr("无法打开 CSV 文件。"));
             return;
         }
-
         model->clear();
-
-        // 第一行作为表头
-        QStringList headers;
-        for (int c = 1; c <= colCount; ++c) {
-            QAxObject *cell = sheet->querySubObject("Cells(int,int)", 1, c);
-            QVariant val = cell->property("Value");
-            QString h = val.isNull() ? QString("列%1").arg(c) : val.toString();
-            headers << h;
-            delete cell;
-        }
-        model->setHorizontalHeaderLabels(headers);
-
-        // 数据行（从第二行开始）
-        for (int r = 2; r <= rowCount; ++r) {
-            QList<QStandardItem*> items;
-            for (int c = 1; c <= colCount; ++c) {
-                QAxObject *cell = sheet->querySubObject("Cells(int,int)", r, c);
-                QVariant val = cell->property("Value");
-                QStandardItem *it = new QStandardItem(val.isNull() ? QString() : val.toString());
-                items.append(it);
-                delete cell;
+        QTextStream in(&f);
+        bool firstLine = true;
+        while (!in.atEnd()) {
+            QString line = in.readLine();
+            QStringList cols = parseCsvLine(line);
+            if (firstLine) {
+                model->setColumnCount(cols.size());
+                model->setHorizontalHeaderLabels(cols);
+                firstLine = false;
+            } else {
+                QList<QStandardItem*> items;
+                for (const QString &c : cols)
+                    items.append(new QStandardItem(c));
+                model->appendRow(items);
             }
-            model->appendRow(items);
         }
-
-        // 关闭 workbook & excel
-        workbook->dynamicCall("Close(bool)", false);
-        excel->dynamicCall("Quit()");
-        delete excel;
-    } catch (...) {
-        if (workbook) workbook->dynamicCall("Close(bool)", false);
-        if (excel) { excel->dynamicCall("Quit()"); delete excel; }
-        QMessageBox::critical(this, tr("错误"), tr("读取 Excel 时发生异常，请确保系统已安装 Excel 并允许 COM 访问。"));
+        f.close();
+        return;
     }
+
+#if HAS_QTXLSX
+    // Use QXlsx to read .xlsx files
+    if (file.endsWith(".xlsx", Qt::CaseInsensitive)) {
+        try {
+            QXlsx::Document xlsx(file);
+            QXlsx::CellRange range = xlsx.dimension();
+            if (!range.isValid()) {
+                QMessageBox::warning(this, tr("读取失败"), tr("未检测到数据或无效的 xlsx 文件。"));
+                return;
+            }
+            int rowCount = range.rowCount();
+            int colCount = range.columnCount();
+
+            model->clear();
+            // read header
+            QStringList headers;
+            for (int c = 1; c <= colCount; ++c) {
+                QVariant v = xlsx.read(1, c);
+                headers << (v.isNull() ? QString("列%1").arg(c) : v.toString());
+            }
+            model->setHorizontalHeaderLabels(headers);
+
+            for (int r = 2; r <= rowCount; ++r) {
+                QList<QStandardItem*> items;
+                for (int c = 1; c <= colCount; ++c) {
+                    QVariant v = xlsx.read(r, c);
+                    items.append(new QStandardItem(v.isNull() ? QString() : v.toString()));
+                }
+                model->appendRow(items);
+            }
+            return;
+        } catch (...) {
+            QMessageBox::warning(this, tr("错误"), tr("读取 xlsx 文件时发生异常。"));
+            return;
+        }
+    }
+#endif
+
+    // If we reach here, .xls or .xlsx without QXlsx available (or .xls selected)
+    QMessageBox::information(this, tr("提示"), tr("要导入 .xlsx 文件，请在你的环境中安装 QXlsx 库（或使用 CSV）。我已在 README 中说明如何安装 QXlsx，或者你可以在仓库中切换到包含 QXlsx 的分支。"));
 }
 
 void MainWindow::onSearchTextChanged(const QString &text)
 {
-    QRegExp regExp(text, Qt::CaseInsensitive, QRegExp::FixedString);
-    proxy->setFilterRegExp(regExp);
+    if (text.isEmpty()) {
+        proxy->setFilterRegularExpression(QRegularExpression());
+    } else {
+        QRegularExpression re(QRegularExpression::escape(text), QRegularExpression::CaseInsensitiveOption);
+        proxy->setFilterRegularExpression(re);
+    }
 }
 
 void MainWindow::addRow()

@@ -1,34 +1,27 @@
-# Qt Excel 客户端示例（ActiveQt 版本）
+# Qt Excel 客户端示例（QXlsx 版本）
 
-这个仓库包含一个使用 Qt（C++）和 ActiveQt (QAxObject) 实现的最小客户端示例，能在 Windows 10 上读取本机安装的 Microsoft Excel 文件（.xls/.xlsx），并在界面中显示、检索、增加、删除行。
+这个分支 use-qtxlsx 提供了一个无需本地安装 Microsoft Excel 的实现：
+- 优先使用 QXlsx（第三方库，读取 .xlsx 文件）
+- 如果没有 QXlsx，则可导入 CSV 文件作为替代（.csv）
 
-文件列表：
-- ExcelClient.pro
-- main.cpp
-- mainwindow.h
-- mainwindow.cpp
-- filterproxymodel.h
+如何使用 QXlsx（建议）
+1. 获取 QXlsx：
+   - 官方仓库 https://github.com/QtExcel/QXlsx
+   - 你可以把 QXlsx 作为子模块或把其源码放到项目的 third_party/QXlsx 目录下，然后在 .pro 中添加 INCLUDEPATH 和 SOURCES，或按 QXlsx 的说明构建并安装到你的 Qt 环境中。
+2. 在你的 Qt Kit 中确保可以包含 <QXlsx/Document>，通常你可以把 QXlsx 的 include 路径添加到 .pro：
+   INCLUDEPATH += $$PWD/third_party/QXlsx/xlsx
+   LIBS += -L$$PWD/third_party/QXlsx/build -lQXlsx
+   或者把 QXlsx 源码合并到项目中。
+3. 打开项目（ExcelClient.pro），构建并运行。导入 .xlsx 文件应自动生效。
 
-先决条件：
-- Windows 10
-- Qt（建议 Qt 5.12+ 或 Qt6），请确保在安装组件中包含 ActiveQt（axcontainer）模块
-- 已安装 Microsoft Excel（QAxObject 依赖 COM Excel）
+如果你不想安装 QXlsx，也可以直接导入 CSV 文件（项目支持 .csv）。
 
-构建与运行：
-1. 在 Qt Creator 中打开项目：File -> Open File or Project -> 选择仓库根目录下的 ExcelClient.pro。
-2. 选择合适的 Kit（MSVC 或 MinGW），然后构建并运行。
+我已把修改推送到分支： use-qtxlsx
+仓库：https://github.com/HuangkD0323/Huang_Qt
+分支：use-qtxlsx
 
-使用说明：
-- 点击 “导入 Excel” 选择 .xlsx/.xls 文件，默认读取第一个工作表。
-- 第一行将被视作表头，余下行为数据并显示在表格中。
-- 在右上角输入关键字可进行跨列检索（不区分大小写）。
-- 点击 “新增行” 添加可编辑的新行。双击单元格编辑内容。
-- 选择行后点击 “删除选中” 可删除选中行。
+下一步我可以为你：
+- 把 QXlsx 源码直接加入仓库（third_party/QXlsx）并修改 .pro，使得开箱即用（我可以这样做并推送一个新的 commit）。
+- 或者给出详细的步骤在你的机器上安装/集成 QXlsx（如果你希望自己管理第三方库）。
 
-注意事项与扩展：
-- 如果你的机器没有安装 Microsoft Excel，我可以把读取逻辑改为使用 QtXlsx 库（无需 Excel）。如果你需要，请回复我，我会把代码改为 QtXlsx 版本并再次提交。
-- 当前实现将整个表格加载到 QStandardItemModel，若数据量很大（数万行），可考虑分页或使用更高效的模型实现。
-
-如果你需要我：
-- 改成 QtXlsx（无需 Excel），请回复“使用 QtXlsx”。
-- 添加“保存到 Excel”或导出为 CSV 功能，请告诉我具体需求。
+告诉我你要我把 QXlsx 源码直接添加到仓库并设置为开箱即用，还是你会在本地安装 QXlsx 并我只需保持当前实现。
